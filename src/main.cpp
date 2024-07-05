@@ -8,7 +8,8 @@
 
 #define MIC 33 // for Core2's PortA (Pin1)
 //#define SAMPLING_FREQUENCY 40000 // 40kHz
-#define SAMPLING_FREQUENCY 2000 // 2kHz
+//#define SAMPLING_FREQUENCY 2000 // 2kHz
+#define SAMPLING_FREQUENCY 4000 // 4kHz
 const uint16_t FFTsamples = 256;  // サンプル数は2のべき乗
 
 double vReal[FFTsamples];  // vReal[]にサンプリングしたデーターを入れる
