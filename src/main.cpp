@@ -2,7 +2,6 @@
 #include <M5Unified.h>
 #include "arduinoFFT.h"
 
-// hogehoge
 
 // ref:
 // https://ambidata.io/samples/m5stack/sound/
