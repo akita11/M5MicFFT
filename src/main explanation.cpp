@@ -150,7 +150,9 @@ void setup() {
 		Question3.どこにも表示されていないのはなぜ？
 		A.loop関数で毎回画面背景を一面黒くしてるからそこで消える。
 		Q.どこに入れれば表示される？
+		A.drawChart。けど毎回表示すると時間かかるしそこまで重要な情報でもないから確認のためにTERMINALに表示させるだけでいいや～。printfだけで書くと可能(以下の文)。
 		*/
+	printf("%d\n", SAMPLING_FREQUENCY);
 }
 
 void DCRemoval(double *vData, uint16_t samples) {
