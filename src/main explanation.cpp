@@ -148,6 +148,8 @@ void setup() {
 		printf：フォーマットされた文字列を出力するために使われる関数。
 		"%d"：引数として渡された整数を文字列に変換して表示するフォーマット指定子。
 		Question3.どこにも表示されていないのはなぜ？
+		A.loop関数で毎回画面背景を一面黒くしてるからそこで消える。
+		Q.どこに入れれば表示される？
 		*/
 }
 
@@ -165,10 +167,12 @@ void DCRemoval(double *vData, uint16_t samples) {
 	}
 }
 
-uint8_t t = 0;
+//uint8_t t = 0;
 	/*
-	Question4.これは何？
+	Question4.これは何？tどこ？
+	A.いらない。
 	*/
+
 void loop() {
   sample(FFTsamples);
   DCRemoval(vReal, FFTsamples);
