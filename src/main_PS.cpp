@@ -3,6 +3,7 @@
 #include "arduinoFFT.h"
 #include <ESP32Servo.h>  // ESP32用のサーボライブラリ。ESP32とはM5stackCore2に搭載されている開発ボード。ESP32では通常のServo.hライブラリがそのまま作動しないためこのライブラリを用いる。
 
+// test comment from akita11
 
 #define MIC 33 // for Core2's PortA (Pin1)
 #define SERVO1_PIN 26 // for Core2's PortB (Pin2)-右車輪
