@@ -1,3 +1,4 @@
+#if 0
 #include <Arduino.h>
 #include <M5Unified.h>
 #include "arduinoFFT.h"
@@ -190,6 +191,8 @@ void loop() {
 	*/
   drawChart(FFTsamples / 2);
 	/*
-	サンプリング定理二よりFFTsamples / 2以上の周波数の情報はとれないからFFTsamples / 2までのグラフを描画する。
+	フーリエ変換するとFFTsamples/2以上の情報はそれ以下の情報と鏡像になって参考にならないからFFTsamples/
+	2までのグラフを描画する。
 	*/
 }
+#endif
