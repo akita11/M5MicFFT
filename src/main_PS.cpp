@@ -14,7 +14,9 @@ const uint16_t FFTsamples = 256;  // サンプル数は2のべき乗
 
 double vReal[FFTsamples]; // サンプリングデータ,フーリエ変換後の複素数の実部,その複素数を実数に変換した値が格納される
 double vImag[FFTsamples]; //フーリエ変換後の複素数の虚部が格納される
-ArduinoFFT<double> FFT = ArduinoFFT<double>(vReal, vImag, FFTsamples, SAMPLING_FREQUENCY);  // FFTオブジェクトを作る
+double vReal2[FFTsamples]; // for processing after sampling
+double vImag2[FFTsamples]; // for processing after sampling
+ArduinoFFT<double> FFT = ArduinoFFT<double>(vReal2, vImag2, FFTsamples, SAMPLING_FREQUENCY);  // FFTオブジェクトを作る
 
 unsigned int sampling_period_us;
 
@@ -23,6 +25,9 @@ Servo leftWheel;   // 左車輪用のサーボオブジェクト
 unsigned long startTime;  // サーボの動作開始時間を記録
 
 bool servoRunning = false; // サーボが動作中かどうかを判定する
+
+volatile bool fDataReady = false;
+volatile SemaphoreHandle_t sampleSemaphore;
 
 // 音の周波数範囲 (Hz)
 struct Note {
@@ -58,14 +63,15 @@ const int kirakiraboshi[] = {
   3, 3, 2, 2, 1, 1, 0, 88};
 int kirakiraboshiIndex = 0;
 
-
 void sample(int nsamples) {
+	fDataReady = false;
 	for (int i = 0; i < nsamples; i++) {
 		unsigned long t = micros();
 		vReal[i] = (double)analogRead(MIC) / 4095.0 * 3.6 + 0.1132; // ESP32のADCの特性を補正
 		vImag[i] = 0;
 		while ((micros() - t) < sampling_period_us) ;
   }
+	fDataReady = true;
 }
 
 int X0 = 30;
@@ -80,7 +86,7 @@ void drawChart(int nsamples) {
 
 	for (int band = 0; band < nsamples; band++) {
 		int hpos = band * band_width + X0;
-		float d = vReal[band];
+		float d = vReal2[band];
 		if (d > dmax) d = dmax;
     int h = (int)((d / dmax) * (_height));
 		M5.Lcd.fillRect(hpos, _height - h, band_pad, h, WHITE);
@@ -89,6 +95,16 @@ void drawChart(int nsamples) {
 			M5.Lcd.setCursor(hpos, _height + Y0 - 10);
 			M5.Lcd.printf("%.1fkHz", ((band * 1.0 * SAMPLING_FREQUENCY) / FFTsamples / 1000));
 		}
+	}
+}
+
+void timer_task(void *pvParameters){
+	while(1){
+		if (xSemaphoreTake(sampleSemaphore, 0) == pdTRUE) {
+			sample(FFTsamples);
+			fDataReady = true;
+		}
+		delay(1);
 	}
 }
 
@@ -105,6 +121,10 @@ void setup() {
     leftWheel.attach(SERVO2_PIN);
 
   startTime = millis();  // 動作開始時刻を記録
+
+	sampleSemaphore = xSemaphoreCreateBinary(); // セマフォの定義
+	disableCore0WDT();
+ 	xTaskCreateUniversal(timer_task, "task1", 8192, NULL, 2/*=priority*/,	NULL, PRO_CPU_NUM);
 }
 
 void DCRemoval(double *vData, uint16_t samples) {
@@ -120,10 +140,20 @@ void DCRemoval(double *vData, uint16_t samples) {
 }
 
 int detectNote() {
-  digitalWrite(27,1);
-    sample(FFTsamples);
-  digitalWrite(27,0); 
-    DCRemoval(vReal, FFTsamples);
+  	digitalWrite(27,1);
+
+		// start sampling, and wait for data sample finishes, executed on PRO_CPU(#1)
+		xSemaphoreGiveFromISR(sampleSemaphore, NULL); // セマフォにメッセージを投げる
+		fDataReady = false; while(fDataReady == false) delay(1);
+//    sample(FFTsamples);
+		for (int i = 0; i < FFTsamples; i++) {
+			vReal2[i] = vReal[i];
+			vImag2[i] = vImag[i];
+		}
+
+  	digitalWrite(27,0); 
+
+    DCRemoval(vReal2, FFTsamples);
     FFT.windowing(FFT_WIN_TYP_HAMMING, FFT_FORWARD);// 窓関数
     FFT.compute(FFT_FORWARD);// FFT処理(複素数で計算)
     FFT.complexToMagnitude();// 複素数を実数に変換
@@ -131,8 +161,8 @@ int detectNote() {
     double maxValue = 0;
     uint16_t maxIndex = 0;
     for (uint16_t i = 1; i < (FFTsamples / 2); i++) {
-        if (vReal[i] > maxValue) {
-            maxValue = vReal[i];
+        if (vReal2[i] > maxValue) {
+            maxValue = vReal2[i];
             maxIndex = i;
         }
     }
@@ -172,8 +202,8 @@ void loop() {
     //uint16_t minIndex = (1000 * FFTsamples) / SAMPLING_FREQUENCY; // 1000Hz以下の成分を無視するためのインデックス
     for (uint16_t i = 1; i < (FFTsamples / 2); i++) { //i=1から始めることでDC成分(直流成分=0Hzの周波数)を無視。
       //for (uint16_t i = minIndex; i < (FFTsamples / 2); i++) { //i=minIndexから始めることで雑音を無視。
-	    if (vReal[i] > maxValue) { //ここのvRealはフーリエ変換によって導き出された複素数を実数に変換したもの=各周波数成分の振幅データ(の[配列])
-        maxValue = vReal[i]; //maxValueには↑の中で最も大きな値が格納される。それと対応する周波数が最も振幅(音量)が大きな周波数
+	    if (vReal2[i] > maxValue) { //ここのvRealはフーリエ変換によって導き出された複素数を実数に変換したもの=各周波数成分の振幅データ(の[配列])
+        maxValue = vReal2[i]; //maxValueには↑の中で最も大きな値が格納される。それと対応する周波数が最も振幅(音量)が大きな周波数
         maxIndex = i;
 		  }
     }
