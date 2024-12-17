@@ -12,10 +12,10 @@
 #define SAMPLING_FREQUENCY 5000 //5kHz...8音ハンドベルに合わせた音域
 const uint16_t FFTsamples = 256;  // サンプル数は2のべき乗
 
-double vReal[FFTsamples]; // サンプリングデータ,フーリエ変換後の複素数の実部,その複素数を実数に変換した値が格納される
-double vImag[FFTsamples]; //フーリエ変換後の複素数の虚部が格納される
-double vReal2[FFTsamples]; // for processing after sampling
-double vImag2[FFTsamples]; // for processing after sampling
+double vReal[FFTsamples][2]; // サンプリングデータ,フーリエ変換後の複素数の実部,その複素数を実数に変換した値が格納される
+double vImag[FFTsamples][2]; //フーリエ変換後の複素数の虚部が格納される
+double vReal2[FFTsamples]; // for FFT
+double vImag2[FFTsamples]; // for FFT
 ArduinoFFT<double> FFT = ArduinoFFT<double>(vReal2, vImag2, FFTsamples, SAMPLING_FREQUENCY);  // FFTオブジェクトを作る
 
 unsigned int sampling_period_us;
@@ -27,7 +27,8 @@ unsigned long startTime;  // サーボの動作開始時間を記録
 bool servoRunning = false; // サーボが動作中かどうかを判定する
 
 volatile bool fDataReady = false;
-volatile SemaphoreHandle_t sampleSemaphore;
+volatile uint8_t bank = 0;
+volatile uint16_t pSample = 0;
 
 // 音の周波数範囲 (Hz)
 struct Note {
@@ -63,16 +64,33 @@ const int kirakiraboshi[] = {
   3, 3, 2, 2, 1, 1, 0, 88};
 int kirakiraboshiIndex = 0;
 
+hw_timer_t * timer = NULL;
+
+void IRAM_ATTR onTimer() {
+	vReal[pSample][bank] = (double)analogRead(MIC) / 4095.0 * 3.6 + 0.1132; // ESP32のADCの特性を補正
+	vImag[pSample][bank] = 0;
+  pSample++;
+  if (pSample == FFTsamples) {
+    pSample = 0;
+    bank = 1 - bank;
+    fDataReady = true;
+  }
+}
+
+/*
 void sample(int nsamples) {
 	fDataReady = false;
+// 	digitalWrite(27, 1);
 	for (int i = 0; i < nsamples; i++) {
 		unsigned long t = micros();
 		vReal[i] = (double)analogRead(MIC) / 4095.0 * 3.6 + 0.1132; // ESP32のADCの特性を補正
 		vImag[i] = 0;
 		while ((micros() - t) < sampling_period_us) ;
   }
+// 	digitalWrite(27, 0);
 	fDataReady = true;
 }
+*/
 
 int X0 = 30;
 int Y0 = 20;
@@ -98,6 +116,7 @@ void drawChart(int nsamples) {
 	}
 }
 
+/*
 void timer_task(void *pvParameters){
 	while(1){
 		if (xSemaphoreTake(sampleSemaphore, 0) == pdTRUE) {
@@ -107,6 +126,7 @@ void timer_task(void *pvParameters){
 		delay(1);
 	}
 }
+*/
 
 void setup() {
 	M5.begin();
@@ -116,15 +136,16 @@ void setup() {
 	sampling_period_us = round(1000000 * (1.0 / SAMPLING_FREQUENCY));
 	M5.Lcd.printf("%d", SAMPLING_FREQUENCY);
 
-    // サーボの初期化
-    rightWheel.attach(SERVO1_PIN);
-    leftWheel.attach(SERVO2_PIN);
+  // サーボの初期化
+  rightWheel.attach(SERVO1_PIN);
+  leftWheel.attach(SERVO2_PIN);
 
   startTime = millis();  // 動作開始時刻を記録
 
-	sampleSemaphore = xSemaphoreCreateBinary(); // セマフォの定義
-	disableCore0WDT();
- 	xTaskCreateUniversal(timer_task, "task1", 8192, NULL, 2/*=priority*/,	NULL, PRO_CPU_NUM);
+	timer = timerBegin(0, 80, true);
+  timerAttachInterrupt(timer, &onTimer, true);
+  timerAlarmWrite(timer, sampling_period_us, true);
+  timerAlarmEnable(timer);
 }
 
 void DCRemoval(double *vData, uint16_t samples) {
@@ -140,63 +161,56 @@ void DCRemoval(double *vData, uint16_t samples) {
 }
 
 int detectNote() {
-  	digitalWrite(27,1);
+	fDataReady = false; while(fDataReady == false) delay(1);
+	for (int i = 0; i < FFTsamples; i++) {
+		vReal2[i] = vReal[i][1 - bank];
+		vImag2[i] = vImag[i][1 - bank];
+	}
 
-		// start sampling, and wait for data sample finishes, executed on PRO_CPU(#1)
-		xSemaphoreGiveFromISR(sampleSemaphore, NULL); // セマフォにメッセージを投げる
-		fDataReady = false; while(fDataReady == false) delay(1);
-//    sample(FFTsamples);
-		for (int i = 0; i < FFTsamples; i++) {
-			vReal2[i] = vReal[i];
-			vImag2[i] = vImag[i];
+//  digitalWrite(27, 1); // 12ms
+	DCRemoval(vReal2, FFTsamples);
+	FFT.windowing(FFT_WIN_TYP_HAMMING, FFT_FORWARD);// 窓関数
+	FFT.compute(FFT_FORWARD);// FFT処理(複素数で計算)
+	FFT.complexToMagnitude();// 複素数を実数に変換
+//  digitalWrite(27, 0);
+
+	double maxValue = 0;
+	uint16_t maxIndex = 0;
+	for (uint16_t i = 1; i < (FFTsamples / 2); i++) {
+		if (vReal2[i] > maxValue) {
+			maxValue = vReal2[i];
+			maxIndex = i;
 		}
+	}
 
-  	digitalWrite(27,0); 
+	double dominantFrequency = (maxIndex * 1.0 * SAMPLING_FREQUENCY) / FFTsamples;
 
-    DCRemoval(vReal2, FFTsamples);
-    FFT.windowing(FFT_WIN_TYP_HAMMING, FFT_FORWARD);// 窓関数
-    FFT.compute(FFT_FORWARD);// FFT処理(複素数で計算)
-    FFT.complexToMagnitude();// 複素数を実数に変換
-
-    double maxValue = 0;
-    uint16_t maxIndex = 0;
-    for (uint16_t i = 1; i < (FFTsamples / 2); i++) {
-        if (vReal2[i] > maxValue) {
-            maxValue = vReal2[i];
-            maxIndex = i;
-        }
-    }
-
-    double dominantFrequency = (maxIndex * 1.0 * SAMPLING_FREQUENCY) / FFTsamples;
-
-    // 各音の範囲を確認し、検出した音が正しいかどうかを返す
-    for (int i = 0; i < sizeof(notes) / sizeof(notes[0]); i++) {
-        if (dominantFrequency >= notes[i].frequencyMin && dominantFrequency <= notes[i].frequencyMax) {
-            return i;
-        }
-    }
-    return -1; // 該当音なし
+	// 各音の範囲を確認し、検出した音が正しいかどうかを返す
+	for (int i = 0; i < sizeof(notes) / sizeof(notes[0]); i++) {
+		if (dominantFrequency >= notes[i].frequencyMin && dominantFrequency <= notes[i].frequencyMax) {
+			return i;
+		}
+	}
+	return -1; // 該当音なし
 }
 
 
 void loop() {
   if (!servoRunning) {// サーボが停止中(動作中ではない時)のみ音を検知するという意味。!servoRunningはservoRunning==falseと同じ。
     int detectedNote = detectNote();
-      // 88(休符)の場合は問答無用で1秒進む
-    if (kirakiraboshi[kirakiraboshiIndex] == 88) {
-        startTime = millis();
-        servoRunning = true;
-        kirakiraboshiIndex = (kirakiraboshiIndex + 1) % (sizeof(kirakiraboshi) / sizeof(kirakiraboshi[0]));
-    }else if (detectedNote == kirakiraboshi[kirakiraboshiIndex]) {
-            startTime = millis();
-            servoRunning = true;
-            kirakiraboshiIndex = (kirakiraboshiIndex + 1) % (sizeof(kirakiraboshi) / sizeof(kirakiraboshi[0]));
-        }
- 
-    M5.Lcd.fillScreen(BLACK);
-    drawChart(FFTsamples / 2);
+	  digitalWrite(27, 1 - digitalRead(27));
 
-    double maxValue = 0;
+      // 88(休符)の場合は問答無用で1秒進む
+		if (kirakiraboshi[kirakiraboshiIndex] == 88) {
+			startTime = millis();
+			servoRunning = true;
+			kirakiraboshiIndex = (kirakiraboshiIndex + 1) % (sizeof(kirakiraboshi) / sizeof(kirakiraboshi[0]));
+		}else if (detectedNote == kirakiraboshi[kirakiraboshiIndex]) {
+			startTime = millis();
+			servoRunning = true;
+			kirakiraboshiIndex = (kirakiraboshiIndex + 1) % (sizeof(kirakiraboshi) / sizeof(kirakiraboshi[0]));
+		}
+		double maxValue = 0;
     uint16_t maxIndex = 0;
     //uint16_t minIndex = (500 * FFTsamples) / SAMPLING_FREQUENCY; // 500Hz以下の成分を無視するためのインデックス
     //uint16_t minIndex = (1000 * FFTsamples) / SAMPLING_FREQUENCY; // 1000Hz以下の成分を無視するためのインデックス
@@ -209,17 +223,15 @@ void loop() {
     }
 
     double dominantFrequency = (maxIndex * 1.0 * SAMPLING_FREQUENCY) / FFTsamples; 
-
-    // maxValue と maxIndex を表示する
+//    M5.Lcd.fillScreen(BLACK);// 42ms(!!)
+    drawChart(FFTsamples / 2); // 25ms
+    // maxValue と maxIndex を表示する (10ms)
     M5.Lcd.setCursor(0, 0); // 表示位置を設定
     M5.Lcd.printf("Max Value: %.2f\n", maxValue);
     M5.Lcd.printf("Max Index: %d\n", maxIndex);
     M5.Lcd.printf("Dominant Frequency: %.2f Hz\n", dominantFrequency);
-
     // シリアルモニターにも表示
-    Serial.printf("Max Value: %.2f\n", maxValue);
-    Serial.printf("Max Index: %d\n", maxIndex);
-    Serial.printf("Dominant Frequency: %.2f Hz\n", dominantFrequency);
+    Serial.printf("Max Value: %.2f (%d) / Dominant Frequency: %.2f [Hz]\n", maxValue, maxIndex, dominantFrequency);
   }
 
   // サーボの制御
