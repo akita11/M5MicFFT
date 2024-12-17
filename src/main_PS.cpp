@@ -102,18 +102,19 @@ void drawChart(int nsamples) {
 	int band_width = floor(_width / nsamples);
 	int band_pad = band_width - 1;
 
-	for (int band = 0; band < nsamples; band++) {
+//    M5.Lcd.fillScreen(BLACK);// 42ms(!!)
+  digitalWrite(27, 1);
+//	for (int band = 0; band < nsamples; band++) { // 32ms
+	for (int band = 0; band < nsamples; band+=2) { // 16ms
 		int hpos = band * band_width + X0;
 		float d = vReal2[band];
 		if (d > dmax) d = dmax;
     int h = (int)((d / dmax) * (_height));
-		M5.Lcd.fillRect(hpos, _height - h, band_pad, h, WHITE);
-	//if ((band % (nsamples / 4)) == 0) {
-	if ((band % (nsamples / 5)) == 0) {
-			M5.Lcd.setCursor(hpos, _height + Y0 - 10);
-			M5.Lcd.printf("%.1fkHz", ((band * 1.0 * SAMPLING_FREQUENCY) / FFTsamples / 1000));
-		}
+//		M5.Lcd.fillRect(hpos, _height - h, band_pad, h, WHITE);
+		M5.Lcd.drawFastVLine(hpos, 0, _height, BLACK); // erase previous line
+		M5.Lcd.drawFastVLine(hpos, _height - h, h, WHITE); // draw line
 	}
+  digitalWrite(27, 0);
 }
 
 /*
@@ -135,6 +136,16 @@ void setup() {
 
 	sampling_period_us = round(1000000 * (1.0 / SAMPLING_FREQUENCY));
 	M5.Lcd.printf("%d", SAMPLING_FREQUENCY);
+
+	int band_width = floor(_width / (FFTsamples / 2));
+	for (int band = 0; band < FFTsamples / 2; band++) {
+		int hpos = band * band_width + X0;
+		//if ((band % (nsamples / 4)) == 0) {
+		if ((band % ((FFTsamples /2) / 5)) == 0) {
+			M5.Lcd.setCursor(hpos, _height + Y0 - 10);
+			M5.Lcd.printf("%.1fkHz", ((band * 1.0 * SAMPLING_FREQUENCY) / FFTsamples / 1000));
+		}
+	}
 
   // サーボの初期化
   rightWheel.attach(SERVO1_PIN);
@@ -198,7 +209,7 @@ int detectNote() {
 void loop() {
   if (!servoRunning) {// サーボが停止中(動作中ではない時)のみ音を検知するという意味。!servoRunningはservoRunning==falseと同じ。
     int detectedNote = detectNote();
-	  digitalWrite(27, 1 - digitalRead(27));
+//	  digitalWrite(27, 1 - digitalRead(27));
 
       // 88(休符)の場合は問答無用で1秒進む
 		if (kirakiraboshi[kirakiraboshiIndex] == 88) {
@@ -223,8 +234,7 @@ void loop() {
     }
 
     double dominantFrequency = (maxIndex * 1.0 * SAMPLING_FREQUENCY) / FFTsamples; 
-//    M5.Lcd.fillScreen(BLACK);// 42ms(!!)
-    drawChart(FFTsamples / 2); // 25ms
+		drawChart(FFTsamples / 2); // 25ms
     // maxValue と maxIndex を表示する (10ms)
     M5.Lcd.setCursor(0, 0); // 表示位置を設定
     M5.Lcd.printf("Max Value: %.2f\n", maxValue);
